@@ -127,22 +127,8 @@ async def _run_lead_pipeline(
             db.add(proposal)
             db.commit()
 
-            if score >= REVIEW_THRESHOLD and lead.email:
-                outreach = await comm_agent.draft_initial_outreach(
-                    lead_name=lead.name, company=lead.company or "", role=lead.role or "",
-                    value_proposition=content[:300], channel="email",
-                )
-                msg = Message(
-                    lead_id=lead.id, direction=MessageDirection.outbound,
-                    content=outreach.get("body", content),
-                    subject=outreach.get("subject", "Freelance Collaboration"),
-                    channel=MessageChannel.email,
-                )
-                db.add(msg)
-                proposal.status = ProposalStatus.sent
-                proposal.sent_at = datetime.now(timezone.utc)
-                lead.status = LeadStatus.contacted
-                db.commit()
+            if score >= REVIEW_THRESHOLD:
+                # Proposal is approved and ready — user sends manually
                 sent += 1
         except Exception as exc:
             logger.warning("Lead proposal failed for %s: %s", lead.name, exc)
@@ -223,9 +209,8 @@ async def _run_gig_pipeline(
             db.add(proposal)
 
             if score >= REVIEW_THRESHOLD:
-                proposal.status = ProposalStatus.sent
-                proposal.sent_at = datetime.now(timezone.utc)
-                gig.status = GigStatus.applied
+                proposal.status = ProposalStatus.approved  # Ready — user sends manually
+                gig.status = GigStatus.discovered  # Proposal ready — user applies manually
                 sent += 1
 
             db.commit()
@@ -306,10 +291,10 @@ async def _run_job_pipeline(
             job.cover_letter = final_letter
 
             if score >= REVIEW_THRESHOLD:
-                job.status = JobStatus.applied
+                job.status = JobStatus.bookmarked  # Ready to apply — user decides
                 applied += 1
             else:
-                job.status = JobStatus.bookmarked
+                job.status = JobStatus.discovered  # Needs improvement
 
             db.commit()
         except Exception as exc:
@@ -358,12 +343,13 @@ async def run_selected_pipelines(
     logger.info("Pipeline %s started for user %s — modules: %s", run_id, user_id, modules)
 
     try:
-        # Step 1: Shared planning
+        # Step 1: Module-specific planning
         _update(db, run, status=PipelineStatus.planning)
         planner = PlannerAgent()
         strategy = await planner.create_strategy(
             skills=user.skills or [], target_industry=user.target_industry or "Technology",
             income_goal=user.income_goal or 5000.0, portfolio=user.portfolio or "",
+            modules=modules,
         )
         _update(db, run, strategy=strategy)
         logger.info("Pipeline %s: strategy created", run_id)

@@ -2,26 +2,21 @@
 
 from .base import BaseAgent
 
-SYSTEM_PROMPT = """You are an expert cover letter writer. You write compelling,
-personalized cover letters that get interviews. Your letters are NEVER generic.
+SYSTEM_PROMPT = """You are an expert cover letter writer. Write a SHORT, punchy cover letter.
 
-Rules:
-- Address the hiring manager or company BY NAME
-- Reference the SPECIFIC job title and company
-- Reference SPECIFIC requirements from the job description
-- Highlight relevant experience with concrete examples
-- Show enthusiasm for the company/role specifically
-- Include a brief "Why this company?" section
-- 250-400 words
-- Professional but genuine tone — not overly formal
-- NEVER use placeholder brackets like [X] — write real content
+CRITICAL RULES:
+- EXACTLY 50-70 words. No more. Count carefully.
+- Address the company BY NAME
+- Reference the SPECIFIC job title
+- Mention 1-2 matching skills from the job
+- One sentence on relevant experience
+- Confident closing
+- Professional but warm tone
+- NEVER use placeholder brackets like [X]
 - NEVER use generic phrases like "I am writing to express my interest"
+- NO fluff, NO filler — every word must earn its place
 
-Structure:
-1. Strong opening — why you're excited about THIS role at THIS company
-2. 2-3 paragraphs showing relevant experience matching job requirements
-3. Why this company specifically (culture, mission, product)
-4. Confident closing with call to action"""
+Format: 3-4 short sentences. That's it."""
 
 
 class CoverLetterAgent(BaseAgent):
@@ -69,7 +64,6 @@ class CoverLetterAgent(BaseAgent):
 ## My Target Role
 {desired_role or job_title}
 
-Write the cover letter now. Make it specific, genuine, and compelling.
-Show you've researched the company and understand the role."""
+Write a SHORT cover letter (50-70 words ONLY). 3-4 punchy sentences. No fluff."""
 
-        return await self.call_claude(SYSTEM_PROMPT, user_prompt, max_tokens=1500)
+        return await self.call_claude(SYSTEM_PROMPT, user_prompt, max_tokens=200)
