@@ -21,9 +21,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 
 app = FastAPI(title="GigLeads AI", version="0.1.0")
 
+# CORS — auto-detect Render or use CORS_ORIGINS env var
+_cors_origins = os.getenv("CORS_ORIGINS", "")
+if _cors_origins:
+    _allowed_origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+elif os.getenv("RENDER"):
+    # On Render, allow all origins (the frontend URL is dynamic)
+    _allowed_origins = ["*"]
+else:
+    _allowed_origins = ["http://localhost:3000", "http://localhost:3001"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(","),
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
