@@ -67,6 +67,7 @@ async def _run_lead_pipeline(
     skills = user.skills or []
     portfolio = user.portfolio or ""
     industry = user.target_industry or "Technology"
+    onboarding = user.onboarding_data or {}
 
     _update(db, run, status=PipelineStatus.finding_leads)
     lead_agent = LeadFinderAgent()
