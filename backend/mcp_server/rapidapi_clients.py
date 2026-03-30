@@ -430,10 +430,22 @@ class InternshipsClient:
                         salary_min = value.get("minValue")
                         salary_max = value.get("maxValue")
 
+                # Determine platform from the actual URL
+                item_url = item.get("url", "")
+                item_source = item.get("source", "")
+                if "linkedin.com" in item_url or item_source == "linkedin":
+                    item_platform = "linkedin"
+                elif "internshala" in item_url:
+                    item_platform = "internshala"
+                elif "indeed" in item_url:
+                    item_platform = "indeed"
+                else:
+                    item_platform = "linkedin"  # Default — API sources from LinkedIn
+
                 normalized = {
                     "title": title,
                     "company": org,
-                    "platform": "internshala",
+                    "platform": item_platform,
                     "job_type": "internship",
                     "location": location_str,
                     "remote": item.get("remote_derived", False),
