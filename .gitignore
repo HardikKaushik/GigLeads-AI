@@ -1,0 +1,38 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+backend/.venv/
+*.egg
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Docker
+pgdata/
+
+# Logs
+*.log
+/tmp/
+
+# Alembic
+backend/alembic/versions/*.pyc
+
+# OS
+Thumbs.db
