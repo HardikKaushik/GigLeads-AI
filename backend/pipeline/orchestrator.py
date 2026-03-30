@@ -74,19 +74,31 @@ async def _run_lead_pipeline(
     weekly = strategy.get("weekly_targets", {})
     lead_count = min(weekly.get("leads_to_find", 5), 10)
 
+    # Get location preference from onboarding data
+    leads_location = onboarding.get("jobs", {}).get("location_preference", "")
+
     raw_leads = await lead_agent.find_and_score_leads(
-        skills=skills, target_industry=industry, count=lead_count, portfolio=portfolio,
+        skills=skills, target_industry=industry, count=lead_count,
+        portfolio=portfolio, location=leads_location,
     )
     logger.info("Lead pipeline: found %d leads", len(raw_leads))
 
     db_leads = []
     for rl in raw_leads:
         lead = Lead(
-            user_id=user.id, name=rl.get("name", "Unknown"),
+            user_id=user.id, name=rl.get("name", rl.get("company", "Unknown")),
             company=rl.get("company", ""), role=rl.get("role", ""),
             email=rl.get("email", ""), linkedin_url=rl.get("linkedin_url", ""),
             score=rl.get("score", 0), status=LeadStatus.new,
-            source="pipeline", notes=rl.get("reasoning", ""),
+            source=rl.get("source", "pipeline"), notes=rl.get("reasoning", ""),
+            location=rl.get("location", ""),
+            company_website=rl.get("company_website", ""),
+            company_logo=rl.get("company_logo", ""),
+            funding_usd=rl.get("funding_usd"),
+            industries=rl.get("industries"),
+            founders=rl.get("founders"),
+            service_opportunity=rl.get("service_opportunity", ""),
+            job_url=rl.get("job_url", ""),
         )
         db.add(lead)
         db_leads.append(lead)

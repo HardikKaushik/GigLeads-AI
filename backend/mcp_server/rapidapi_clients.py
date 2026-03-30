@@ -477,6 +477,151 @@ class InternshipsClient:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Crunchbase — company/startup discovery and enrichment
+# Uses RAPIDAPI_KEY (crunchbase4.p.rapidapi.com)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class CrunchbaseClient:
+    """Lookup company data from Crunchbase — funding, industry, size.
+
+    Endpoint: POST /company (lookup by domain)
+
+    Use case for B2B leads:
+      1. Find companies from job listings (JSearch/LinkedIn)
+      2. Enrich with Crunchbase → get funding amount, industry, size
+      3. Companies with recent funding = high-budget potential clients
+    """
+
+    HOST = "crunchbase4.p.rapidapi.com"
+
+    @property
+    def enabled(self) -> bool:
+        return bool(_get_key())
+
+    async def get_company(self, domain: str) -> dict | None:
+        """Lookup company by domain.
+
+        Args:
+            domain: Company website domain (e.g., "stripe.com")
+
+        Returns:
+            Enriched company dict with funding, industries, location, etc.
+        """
+        if not self.enabled:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    f"https://{self.HOST}/company",
+                    headers=_headers(self.HOST, _get_key()),
+                    json={"company_domain": domain},
+                )
+                resp.raise_for_status()
+                body = resp.json()
+
+            if body.get("err"):
+                logger.debug("Crunchbase: no data for %s — %s", domain, body["err"])
+                return None
+
+            company = body.get("company", {})
+            if not company:
+                return None
+
+            # Parse funding
+            funding = company.get("funding", {})
+            funding_amount = None
+            if isinstance(funding, dict):
+                funding_amount = funding.get("value_usd") or funding.get("value")
+
+            # Parse founders/people
+            founders = company.get("founders", [])
+            people = []
+            if isinstance(founders, list):
+                for f in founders[:5]:
+                    if isinstance(f, dict):
+                        people.append({
+                            "name": f.get("name", ""),
+                            "title": f.get("title", ""),
+                            "linkedin": f.get("linkedin", ""),
+                        })
+
+            return {
+                "name": company.get("name", ""),
+                "domain": domain,
+                "about": (company.get("about", "") or "")[:300],
+                "long_description": (company.get("long_description", "") or "")[:500],
+                "founded_year": company.get("founded_year", ""),
+                "funding_usd": funding_amount,
+                "industries": company.get("industries", []),
+                "location": company.get("location", ""),
+                "num_employees": company.get("num_employees", ""),
+                "website": company.get("website", f"https://{domain}"),
+                "linkedin_url": company.get("linkedin", ""),
+                "twitter_url": company.get("twitter", ""),
+                "logo": company.get("logo", ""),
+                "founders": people,
+                "status": company.get("status", ""),
+                "source": "crunchbase",
+            }
+        except httpx.HTTPStatusError as e:
+            logger.warning("Crunchbase API error for %s: %s", domain, e.response.status_code)
+            return None
+        except Exception as e:
+            logger.warning("Crunchbase lookup failed for %s: %s", domain, e)
+            return None
+
+    async def enrich_leads(self, leads: list[dict]) -> list[dict]:
+        """Enrich a list of leads with Crunchbase data.
+
+        For each lead that has a company_website, lookup Crunchbase
+        and add funding, industry, founders data.
+        """
+        if not self.enabled:
+            return leads
+
+        import asyncio
+
+        tasks = []
+        for lead in leads:
+            website = lead.get("company_website") or ""
+            if website:
+                domain = website.replace("https://", "").replace("http://", "").split("/")[0]
+                if domain and "linkedin.com" not in domain:
+                    tasks.append((lead, self.get_company(domain)))
+
+        if not tasks:
+            return leads
+
+        results = await asyncio.gather(
+            *[t[1] for t in tasks],
+            return_exceptions=True,
+        )
+
+        enriched_count = 0
+        for (lead, _), result in zip(tasks, results):
+            if isinstance(result, dict) and result:
+                enriched_count += 1
+                lead["funding_usd"] = result.get("funding_usd")
+                lead["industries"] = result.get("industries", [])
+                lead["company_description"] = result.get("about", "")
+                lead["num_employees"] = result.get("num_employees", "")
+                lead["founded_year"] = result.get("founded_year", "")
+                if result.get("linkedin_url") and not lead.get("linkedin_url"):
+                    lead["linkedin_url"] = result["linkedin_url"]
+                if result.get("logo") and not lead.get("company_logo"):
+                    lead["company_logo"] = result["logo"]
+                # Add founders as potential contacts
+                if result.get("founders"):
+                    lead["founders"] = result["founders"]
+                lead["crunchbase_enriched"] = True
+
+        logger.info("Crunchbase enriched %d/%d leads", enriched_count, len(tasks))
+        return leads
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # LinkedIn Data API — company enrichment
 # Uses RAPIDAPI_KEY_2
 # ═══════════════════════════════════════════════════════════════════════
@@ -567,6 +712,7 @@ class RapidAPIService:
         self.linkedin_jobs = LinkedInJobSearchClient()
         self.internships = InternshipsClient()
         self.linkedin_company = LinkedInCompanyClient()
+        self.crunchbase = CrunchbaseClient()
 
     @property
     def enabled(self) -> bool:
@@ -580,30 +726,58 @@ class RapidAPIService:
         location: str = "",
         count: int = 10,
     ) -> list[dict]:
-        """Search for leads by extracting employer data from LinkedIn + JSearch job listings.
+        """Find B2B leads — companies/people who NEED your service built.
 
-        Uses LinkedIn Job Search API as primary source (better company data with LinkedIn URLs),
-        then supplements with JSearch.
+        Strategy:
+          1. Search for companies actively looking to BUILD/BUY services
+             (via job listings for freelance/contract work — signals they have budget + need)
+          2. Extract unique companies with their details
+          3. Enrich with Crunchbase (funding, industry, founders = decision makers)
+          4. Prioritize recently funded companies (they have budget)
+
+        This finds CLIENTS, not employers — people who need software built,
+        websites designed, apps developed, etc.
         """
         import asyncio
 
-        query_parts = [kw for kw in [keywords, industry, role] if kw]
-        query = " ".join(query_parts) if query_parts else "technology hiring"
+        # Build search query focused on CLIENT NEEDS, not employment
+        query_parts = [kw for kw in [keywords, industry] if kw]
+        query = " ".join(query_parts) if query_parts else "technology startup"
 
         tasks = []
 
-        # LinkedIn Job Search API — gives us company name + LinkedIn company URL
+        # LinkedIn Job Search API — find companies posting contract/freelance work
         if self.linkedin_jobs.enabled:
-            tasks.append(("linkedin", self.linkedin_jobs.search(
+            # Search for freelance/contract postings (= companies buying services)
+            tasks.append(("linkedin_contract", self.linkedin_jobs.search(
+                title_filter=f"{query} freelance",
+                location_filter=location if location and location.lower() != "remote" else "",
+                limit=min(count * 2, 50),
+            )))
+            # Also search for the skill directly (companies needing this skill)
+            tasks.append(("linkedin_skill", self.linkedin_jobs.search(
                 title_filter=query,
-                location_filter=location,
-                limit=min(count * 3, 100),  # Fetch extra for dedup
+                location_filter=location if location and location.lower() != "remote" else "",
+                limit=min(count * 2, 50),
             )))
 
-        # JSearch as supplement
-        tasks.append(("jsearch", self.jsearch.search(
+        # JSearch — find companies posting projects on Indeed/Glassdoor
+        country = "us"
+        if location:
+            loc_lower = location.lower()
+            if "india" in loc_lower:
+                country = "in"
+            elif "uk" in loc_lower or "united kingdom" in loc_lower:
+                country = "uk"
+
+        tasks.append(("jsearch_projects", self.jsearch.search(
+            query=f"{query} contract project freelance",
+            country=country,
+            num_pages=1,
+        )))
+        tasks.append(("jsearch_companies", self.jsearch.search(
             query=query,
-            country="us" if not location else ("in" if "india" in location.lower() else "us"),
+            country=country,
             num_pages=1,
         )))
 
@@ -612,31 +786,27 @@ class RapidAPIService:
             return_exceptions=True,
         )
 
-        # Prioritize LinkedIn results first (they have company LinkedIn URLs)
-        linkedin_jobs: list[dict] = []
-        jsearch_jobs: list[dict] = []
+        # Collect all jobs, LinkedIn first (better company data)
+        all_jobs: list[dict] = []
         for (source, _), result in zip(tasks, results):
             if isinstance(result, Exception):
                 logger.warning("Lead source %s failed: %s", source, str(result)[:100])
                 continue
-            if not isinstance(result, list):
-                continue
-            if "linkedin" in source:
-                linkedin_jobs.extend(result)
-            else:
-                jsearch_jobs.extend(result)
+            if isinstance(result, list):
+                # LinkedIn results first for priority
+                if "linkedin" in source:
+                    all_jobs = result + all_jobs
+                else:
+                    all_jobs.extend(result)
 
-        # LinkedIn first, then JSearch — so LinkedIn company URLs take priority
-        jobs = linkedin_jobs + jsearch_jobs
-
-        # Extract unique companies as leads
+        # Extract unique companies as B2B leads
         seen_companies: set[str] = set()
         extracted_leads: list[dict] = []
-        for job in jobs:
+        for job in all_jobs:
             company = job.get("company", "")
-            if not company or company in seen_companies:
+            if not company or company.lower() in seen_companies:
                 continue
-            seen_companies.add(company)
+            seen_companies.add(company.lower())
 
             employer_website = job.get("employer_website") or ""
             employer_logo = job.get("employer_logo") or ""
@@ -644,52 +814,56 @@ class RapidAPIService:
             # LinkedIn Job Search API provides organization_url (LinkedIn company page)
             linkedin_company_url = ""
             if job.get("source") == "linkedin_job_search_api":
-                linkedin_company_url = employer_website  # This is the LinkedIn company URL
-                employer_website = ""  # Don't duplicate
+                linkedin_company_url = employer_website
+                employer_website = ""
+
+            # Determine lead type based on job posting
+            job_title = job.get("title", "")
+            job_type = job.get("job_type", "")
+            is_contract = job_type in ("contract", "freelance") or any(
+                kw in job_title.lower() for kw in ["freelance", "contract", "project", "consultant"]
+            )
+
+            lead_signal = "Actively hiring freelancers" if is_contract else "Growing team — potential client"
 
             extracted_leads.append({
-                "name": "Hiring Manager",
+                "name": company,  # Company name as lead name
                 "company": company,
-                "role": f"Hiring for: {job.get('title', '')}",
+                "role": lead_signal,
                 "email": "",
                 "linkedin_url": linkedin_company_url,
                 "location": job.get("location", ""),
-                "headline": f"{company} is actively hiring — {job.get('title', '')}",
+                "headline": f"{company} — {job_title}",
                 "company_website": employer_website,
                 "company_logo": employer_logo,
-                "source": job.get("source", "jsearch_employer"),
+                "source": job.get("source", "jsearch"),
                 "job_url": job.get("url", ""),
+                "job_title": job_title,
+                "job_type": job_type,
+                "is_contract": is_contract,
             })
-            if len(extracted_leads) >= count:
+            if len(extracted_leads) >= count * 2:  # Fetch extra, will trim after enrichment
                 break
 
-        # Try to enrich leads with LinkedIn company data (disabled — API deprecated)
-        if False and self.linkedin_company.enabled:
-            enrich_tasks = []
-            for lead in extracted_leads:
-                website = lead.get("company_website", "")
-                if website:
-                    domain = website.replace("https://", "").replace("http://", "").split("/")[0]
-                    enrich_tasks.append((lead, self.linkedin_company.get_company_by_domain(domain)))
+        # Enrich with Crunchbase — adds funding, founders, industry
+        if self.crunchbase.enabled and extracted_leads:
+            extracted_leads = await self.crunchbase.enrich_leads(extracted_leads)
 
-            if enrich_tasks:
-                results = await asyncio.gather(
-                    *[t[1] for t in enrich_tasks],
-                    return_exceptions=True,
-                )
-                for (lead, _), result in zip(enrich_tasks, results):
-                    if isinstance(result, dict) and result:
-                        if result.get("linkedin_url"):
-                            lead["linkedin_url"] = result["linkedin_url"]
-                        if result.get("industry"):
-                            lead["industry"] = result["industry"]
-                        if result.get("company_size"):
-                            lead["company_size"] = result["company_size"]
-                        if result.get("logo"):
-                            lead["company_logo"] = result["logo"]
+        # Sort: recently funded companies first, then contract posters, then rest
+        def lead_sort_key(lead: dict) -> tuple:
+            funding = lead.get("funding_usd") or 0
+            is_contract = 1 if lead.get("is_contract") else 0
+            has_founders = 1 if lead.get("founders") else 0
+            return (-funding, -is_contract, -has_founders)
 
-        logger.info("Extracted %d leads from JSearch employers", len(extracted_leads))
-        return extracted_leads
+        extracted_leads.sort(key=lead_sort_key)
+
+        logger.info(
+            "Found %d B2B leads (%d Crunchbase-enriched)",
+            len(extracted_leads),
+            sum(1 for l in extracted_leads if l.get("crunchbase_enriched")),
+        )
+        return extracted_leads[:count]
 
     async def search_internships(
         self,

@@ -110,6 +110,14 @@ class LeadOut(BaseModel):
     status: str
     source: str | None
     notes: str | None
+    location: str | None = None
+    company_website: str | None = None
+    company_logo: str | None = None
+    funding_usd: float | None = None
+    industries: list[str] | None = None
+    founders: list[dict] | None = None
+    service_opportunity: str | None = None
+    job_url: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

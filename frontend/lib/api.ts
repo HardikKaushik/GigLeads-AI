@@ -77,6 +77,14 @@ export interface Lead {
   status: string;
   source: string | null;
   notes: string | null;
+  location: string | null;
+  company_website: string | null;
+  company_logo: string | null;
+  funding_usd: number | null;
+  industries: string[] | null;
+  founders: { name: string; title: string; linkedin: string }[] | null;
+  service_opportunity: string | null;
+  job_url: string | null;
   created_at: string;
 }
 

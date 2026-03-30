@@ -152,8 +152,16 @@ class Lead(Base):
         default=LeadStatus.new,
         nullable=False,
     )
-    source = Column(String(100), nullable=True)  # "apollo", "linkedin", etc.
+    source = Column(String(100), nullable=True)  # "jsearch", "linkedin", "crunchbase"
     notes = Column(Text, nullable=True)
+    location = Column(String(255), nullable=True)
+    company_website = Column(String(512), nullable=True)
+    company_logo = Column(String(512), nullable=True)
+    funding_usd = Column(Float, nullable=True)  # Crunchbase funding amount
+    industries = Column(JSON, nullable=True)  # ["SaaS", "FinTech"]
+    founders = Column(JSON, nullable=True)  # [{"name":"...", "title":"...", "linkedin":"..."}]
+    service_opportunity = Column(Text, nullable=True)  # What you could pitch
+    job_url = Column(String(512), nullable=True)  # Original job posting URL
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     user = relationship("User", back_populates="leads")
