@@ -16,7 +16,7 @@ services:
     rootDir: .
     buildCommand: |
       pip install -r backend/requirements.txt gunicorn
-      cd backend && alembic upgrade head
+      python -m backend.setup_db
     startCommand: gunicorn backend.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 120
     healthCheckPath: /health
     envVars:
