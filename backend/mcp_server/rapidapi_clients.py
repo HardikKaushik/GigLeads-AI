@@ -366,35 +366,52 @@ class InternshipsClient:
                 logger.warning("Internships API returned non-list: %s", type(data))
                 return []
 
-            # Client-side filtering by keywords and location
+            # STRICT client-side filtering — only return tech/relevant internships
+            # The API returns ALL internships (babysitters, nurses, etc.)
+            # We MUST filter aggressively to only show relevant results
             keywords_lower = keywords.lower().split() if keywords else []
             location_lower = location.lower() if location else ""
 
-            # First pass: try filtered results
+            # Tech-related terms to identify relevant internships
+            TECH_TERMS = {
+                "software", "developer", "engineer", "data", "python", "java",
+                "react", "web", "frontend", "backend", "fullstack", "full-stack",
+                "devops", "cloud", "ai", "ml", "machine learning", "deep learning",
+                "analytics", "database", "api", "mobile", "ios", "android",
+                "javascript", "typescript", "node", "design", "ux", "ui",
+                "product", "qa", "testing", "cyber", "security", "network",
+                "system", "linux", "aws", "azure", "gcp", "docker", "kubernetes",
+                "blockchain", "fintech", "saas", "startup", "tech", "it",
+                "computer", "science", "information", "digital", "automation",
+            }
+
             filtered = []
-            unfiltered = []
             for item in data:
                 title = item.get("title", "")
                 org = item.get("organization", "")
                 locations = item.get("locations_derived", [])
                 location_str = locations[0] if locations else ""
+                searchable = f"{title} {org}".lower()
 
-                matches_keyword = True
-                matches_location = True
-
+                # Must match at least one keyword if provided
                 if keywords_lower:
-                    searchable = f"{title} {org}".lower()
                     matches_keyword = any(kw in searchable for kw in keywords_lower)
+                else:
+                    # No keywords — filter to tech-only internships
+                    matches_keyword = any(term in searchable for term in TECH_TERMS)
 
+                if not matches_keyword:
+                    continue
+
+                # Location filter
                 if location_lower and location_str:
-                    matches_location = location_lower in location_str.lower()
+                    if location_lower not in location_str.lower():
+                        continue
 
-                if matches_keyword and matches_location:
-                    filtered.append(item)
-                unfiltered.append(item)
+                filtered.append(item)
 
-            # Use filtered if we got results, otherwise return all (small dataset)
-            source_list = filtered if filtered else unfiltered
+            # If no matches after strict filtering, return empty — don't show irrelevant results
+            source_list = filtered
 
             results = []
             for item in source_list:

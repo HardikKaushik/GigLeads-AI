@@ -177,12 +177,19 @@ PRESERVE all original URLs and data exactly."""
                 # Sort by match_score
                 scored.sort(key=lambda j: j.get("match_score", 0), reverse=True)
                 return scored[:count]
-        except Exception:
-            # Fallback: return raw jobs with basic scoring
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Job AI scoring failed: %s", e)
+            # Fallback: basic keyword scoring instead of flat 50
+            user_skills_lower = {s.lower() for s in skills}
             for job in raw_jobs:
-                job["match_score"] = 50
-                job["match_reasoning"] = "AI scoring unavailable — manual review recommended"
-                job["skills_matched"] = []
-                job["skills_missing"] = []
+                desc = (job.get("description", "") or "").lower()
+                title = (job.get("title", "") or "").lower()
+                text = f"{title} {desc}"
+                matched = [s for s in skills if s.lower() in text]
+                job["match_score"] = min(40 + len(matched) * 15, 95)
+                job["skills_matched"] = matched
+                job["skills_missing"] = [s for s in skills if s.lower() not in text]
+                job["match_reasoning"] = f"Keyword match: {len(matched)}/{len(skills)} skills found"
 
         return raw_jobs[:count]
